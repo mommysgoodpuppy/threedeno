@@ -1,5 +1,15 @@
 import * as THREE from "three/webgpu";
 
+export enum RuleSet {
+  GOLXR, // Original custom rule with spawner
+  LIFE_5766, // B6/S567 classic 3D life
+  LIFE_25D, // 2.5D rule: B3/S23 (plane) + limited cross-layer
+}
+
+const CURRENT_RULESET = RuleSet.GOLXR; // TOGGLE HERE
+const ENABLE_GOL_DEBUG = false;
+const AUTO_RESEED_ON_EXTINCTION = true;
+
 // Define the structure of our game state
 interface GameState {
   size: number;
@@ -19,10 +29,8 @@ interface GameState {
   spawnerMesh: THREE.Mesh | null;
   interactionRadius: number;
   fadeSpeed: number; // How fast cells fade in/out per frame
+  currentRuleSet: RuleSet;
 }
-
-const ENABLE_GOL_DEBUG = false;
-const AUTO_RESEED_ON_EXTINCTION = true;
 
 // State
 const gameState: GameState = {
@@ -35,7 +43,7 @@ const gameState: GameState = {
   maxInstances: 20 * 20 * 20,
   activeInstances: 0,
   lastUpdate: 0,
-  updateInterval: 66, // Speed of update (1.5x faster)
+  updateInterval: 66, // Speed of update (10x slower)
   recentlyAdded: {},
   cellMemory: 700,
   bias: 0.59,
@@ -43,6 +51,7 @@ const gameState: GameState = {
   spawnerMesh: null,
   interactionRadius: 0.01, // Radius for spawner (smaller)
   fadeSpeed: 0.05, // Fade speed per frame (slower for smoother effect)
+  currentRuleSet: CURRENT_RULESET,
 };
 
 let golRoot: THREE.Group | null = null;
@@ -142,6 +151,58 @@ const createEmptyGrid = (
 
 const seedInitialPattern = () => {
   if (!gameState.grid) return;
+
+  if (gameState.currentRuleSet === RuleSet.LIFE_5766) {
+    // 5766 Initialization: ~20% random fill in a centered sub-cube
+    const center = Math.floor(gameState.size / 2);
+    const range = Math.floor(gameState.size / 2) - 2; // Fill most of the space but leave margin
+
+    for (let x = center - range; x <= center + range; x++) {
+      for (let y = center - range; y <= center + range; y++) {
+        for (let z = center - range; z <= center + range; z++) {
+          if (Math.random() < 0.20) {
+            if (
+              x >= 0 && x < gameState.size &&
+              y >= 0 && y < gameState.size &&
+              z >= 0 && z < gameState.size
+            ) {
+              gameState.grid[x][y][z] = 1;
+              gameState.recentlyAdded[x][y][z] = Date.now();
+            }
+          }
+        }
+      }
+    }
+    debugLog("Seeded LIFE_5766 with ~20% density.");
+    return;
+  }
+
+  if (gameState.currentRuleSet === RuleSet.LIFE_25D) {
+    // 2.5D Initialization: ~30% random fill (typical for standard Life-like cellular automata)
+    const center = Math.floor(gameState.size / 2);
+    const range = Math.floor(gameState.size / 2) - 2;
+
+    for (let x = center - range; x <= center + range; x++) {
+      for (let y = center - range; y <= center + range; y++) {
+        for (let z = center - range; z <= center + range; z++) {
+          if (Math.random() < 0.30) {
+            if (
+              x >= 0 && x < gameState.size &&
+              y >= 0 && y < gameState.size &&
+              z >= 0 && z < gameState.size
+            ) {
+              gameState.grid[x][y][z] = 1;
+              gameState.recentlyAdded[x][y][z] = Date.now();
+            }
+          }
+        }
+      }
+    }
+    debugLog("Seeded LIFE_25D with ~30% density.");
+    return;
+  }
+
+  // GOLXR Initialization
   const center = Math.floor(gameState.size / 2);
   // Simple shape
   const seeds = [
@@ -206,6 +267,44 @@ const countNeighbors = (x: number, y: number, z: number): number => {
   return count;
 };
 
+// Helper for 2.5D neighbor counting
+const countNeighbors25D = (
+  x: number,
+  y: number,
+  z: number,
+): { plane: number; cross: number } => {
+  if (!gameState.grid) return { plane: 0, cross: 0 };
+  let plane = 0;
+  let cross = 0;
+
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        if (dx === 0 && dy === 0 && dz === 0) continue;
+
+        const nx = x + dx;
+        const ny = y + dy;
+        const nz = z + dz;
+
+        if (
+          nx >= 0 && nx < gameState.size &&
+          ny >= 0 && ny < gameState.size &&
+          nz >= 0 && nz < gameState.size
+        ) {
+          if (gameState.grid[nx][ny][nz] === 1) {
+            if (dz === 0) {
+              plane++;
+            } else {
+              cross++;
+            }
+          }
+        }
+      }
+    }
+  }
+  return { plane, cross };
+};
+
 const updateGrid = () => {
   if (!gameState.grid || !gameState.nextGrid) return;
   const currentTime = Date.now();
@@ -217,48 +316,91 @@ const updateGrid = () => {
   for (let x = 0; x < gameState.size; x++) {
     for (let y = 0; y < gameState.size; y++) {
       for (let z = 0; z < gameState.size; z++) {
-        const neighbors = countNeighbors(x, y, z);
         const currentState = gameState.grid[x][y][z];
         const lastAddedTime = gameState.recentlyAdded[x][y][z];
 
-        if (currentTime - lastAddedTime < gameState.cellMemory) {
-          gameState.nextGrid[x][y][z] = 1;
-          continue; // Keep young cells alive
-        }
+        // --- Ruleset Logic ---
 
-        if (currentState === 1) {
-          if (neighbors === 4) {
-            gameState.nextGrid[x][y][z] = (Math.random() > (0.1 - survivalBias))
-              ? 1
-              : 0;
-          } else if (neighbors === 3 || neighbors === 5) {
-            gameState.nextGrid[x][y][z] = (Math.random() > (0.4 - survivalBias))
-              ? 1
-              : 0;
-          } else if (neighbors > 5) {
-            gameState.nextGrid[x][y][z] =
-              (Math.random() > (0.99 - survivalBias)) ? 1 : 0;
+        if (gameState.currentRuleSet === RuleSet.LIFE_5766) {
+          const neighbors = countNeighbors(x, y, z);
+          // Rule: B6/S567
+          // Birth: exactly 6
+          // Survival: 5, 6, 7
+          if (currentState === 1) {
+            if (neighbors >= 5 && neighbors <= 7) {
+              gameState.nextGrid[x][y][z] = 1;
+            } else {
+              gameState.nextGrid[x][y][z] = 0;
+            }
           } else {
-            gameState.nextGrid[x][y][z] =
-              (Math.random() > (0.99 - survivalBias)) ? 1 : 0;
+            if (neighbors === 6) {
+              gameState.nextGrid[x][y][z] = 1;
+            } else {
+              gameState.nextGrid[x][y][z] = 0;
+            }
+          }
+        } else if (gameState.currentRuleSet === RuleSet.LIFE_25D) {
+          // 2.5D Rules
+          // Birth: Plane == 3 AND Cross <= 1
+          // Survival: Plane == 2,3 AND Cross <= 1
+          const { plane, cross } = countNeighbors25D(x, y, z);
+
+          if (currentState === 1) {
+            // Survival
+            if ((plane === 2 || plane === 3) && cross <= 1) {
+              gameState.nextGrid[x][y][z] = 1;
+            } else {
+              gameState.nextGrid[x][y][z] = 0;
+            }
+          } else {
+            // Birth
+            if (plane === 3 && cross <= 1) {
+              gameState.nextGrid[x][y][z] = 1;
+            } else {
+              gameState.nextGrid[x][y][z] = 0;
+            }
           }
         } else {
-          if (neighbors === 4) {
-            gameState.nextGrid[x][y][z] = (Math.random() > (0.7 - birthBias))
-              ? 1
-              : 0;
-          } else if (neighbors === 3) {
-            gameState.nextGrid[x][y][z] =
-              (Math.random() > (0.95 - birthBias / 2)) ? 1 : 0;
-          } else {
-            gameState.nextGrid[x][y][z] = 0;
-          }
-        }
+          // Default: GOLXR (Original Custom Rules with memory and bias)
+          const neighbors = countNeighbors(x, y, z);
 
-        // Random death for old cells
-        if (gameState.nextGrid[x][y][z] === 1) {
-          if (Math.random() > (0.95 + survivalBias)) {
-            gameState.nextGrid[x][y][z] = 0;
+          if (currentTime - lastAddedTime < gameState.cellMemory) {
+            gameState.nextGrid[x][y][z] = 1;
+            continue; // Keep young cells alive
+          }
+
+          if (currentState === 1) {
+            if (neighbors === 4) {
+              gameState.nextGrid[x][y][z] =
+                (Math.random() > (0.1 - survivalBias)) ? 1 : 0;
+            } else if (neighbors === 3 || neighbors === 5) {
+              gameState.nextGrid[x][y][z] =
+                (Math.random() > (0.4 - survivalBias)) ? 1 : 0;
+            } else if (neighbors > 5) {
+              gameState.nextGrid[x][y][z] =
+                (Math.random() > (0.99 - survivalBias)) ? 1 : 0;
+            } else {
+              gameState.nextGrid[x][y][z] =
+                (Math.random() > (0.99 - survivalBias)) ? 1 : 0;
+            }
+          } else {
+            if (neighbors === 4) {
+              gameState.nextGrid[x][y][z] = (Math.random() > (0.7 - birthBias))
+                ? 1
+                : 0;
+            } else if (neighbors === 3) {
+              gameState.nextGrid[x][y][z] =
+                (Math.random() > (0.95 - birthBias / 2)) ? 1 : 0;
+            } else {
+              gameState.nextGrid[x][y][z] = 0;
+            }
+          }
+
+          // Random death for old cells
+          if (gameState.nextGrid[x][y][z] === 1) {
+            if (Math.random() > (0.95 + survivalBias)) {
+              gameState.nextGrid[x][y][z] = 0;
+            }
           }
         }
       }
@@ -448,7 +590,7 @@ export const init = (scene: THREE.Scene, _renderer: THREE.Renderer) => {
     gameState.edgeInstancedMesh.count = gameState.activeInstances;
   }
 
-  // Create Spawner Mesh
+  // Create Spawner Mesh (Only relevant for GOLXR, but we create it anyway and toggle visibility/logic)
   const spawnerGeo = new THREE.SphereGeometry(
     gameState.interactionRadius,
     16,
@@ -462,7 +604,12 @@ export const init = (scene: THREE.Scene, _renderer: THREE.Renderer) => {
     visible: false,
   });
   gameState.spawnerMesh = new THREE.Mesh(spawnerGeo, spawnerMat);
-  golRoot.add(gameState.spawnerMesh);
+  // Only add/show spawner if in GOLXR mode
+  if (gameState.currentRuleSet === RuleSet.GOLXR) {
+    golRoot.add(gameState.spawnerMesh);
+  } else {
+    gameState.spawnerMesh.visible = false;
+  }
 
   if (golRoot) {
     debugLog("SimpleGOL initialized.");
@@ -472,20 +619,23 @@ export const init = (scene: THREE.Scene, _renderer: THREE.Renderer) => {
 export const animate = () => {
   const currentTime = Date.now();
 
-  // Move spawner automatically
-  const time = currentTime * 0.001;
-  gameState.spawnerPosition.set(
-    Math.sin(time) * 0.05,
-    Math.cos(time * 0.7) * 0.05,
-    Math.sin(time * 0.5) * 0.05,
-  );
+  // Spawner Logic (only if GOLXR)
+  if (gameState.currentRuleSet === RuleSet.GOLXR) {
+    // Move spawner automatically
+    const time = currentTime * 0.001;
+    gameState.spawnerPosition.set(
+      Math.sin(time) * 0.05,
+      Math.cos(time * 0.7) * 0.05,
+      Math.sin(time * 0.5) * 0.05,
+    );
 
-  if (gameState.spawnerMesh) {
-    gameState.spawnerMesh.position.copy(gameState.spawnerPosition);
+    if (gameState.spawnerMesh) {
+      gameState.spawnerMesh.position.copy(gameState.spawnerPosition);
+    }
+
+    // Activate cells near spawner
+    addCellsNearSpawner();
   }
-
-  // Activate cells near spawner
-  addCellsNearSpawner();
 
   if (currentTime - gameState.lastUpdate > gameState.updateInterval) {
     updateGrid();

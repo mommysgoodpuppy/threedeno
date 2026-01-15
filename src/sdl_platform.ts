@@ -1,5 +1,3 @@
-import { tempFile } from "./util.ts";
-
 //#region rAF polyfill
 type RafCallback = (time: number) => void;
 const globalAny = globalThis as unknown as {
@@ -21,7 +19,7 @@ if (!globalAny.cancelAnimationFrame) {
 const BUILD_OS = Deno.build.os;
 
 //#region SDL2 FFI
-//const sdlpath = tempFile("../SDL2", import.meta.dirname!)
+//const sdlpath = tempFile("../SDL2.dll", import.meta.dirname!)
 console.log("Loading SDL2 library");
 const sdl2 = Deno.dlopen("SDL2", {
   SDL_Init: { parameters: ["u32"], result: "i32" },
@@ -71,7 +69,7 @@ function createWindow(title: string, width: number, height: number) {
   if (raw === null) {
     throw new Error("SDL_CreateWindow failed");
   }
-  console.log("SDL window created", raw);
+  console.log("SDL window created", Deno.UnsafePointer.value(raw));
   return raw;
 }
 
@@ -113,7 +111,7 @@ function createSurface(
     const hwnd = view.getPointer(4 + 4)!; // usize
     if (subsystem === SDL_SYSWM_WINDOWS) {
       const hinstance = view.getPointer(4 + 4 + 8 + 8)!; // usize (gap of 8 bytes)
-      console.log("Using win32 surface", { hwnd, hinstance });
+      console.log("Using win32 surface", { hwnd: Deno.UnsafePointer.value(hwnd), hinstance: Deno.UnsafePointer.value(hinstance) });
       return new Deno.UnsafeWindowSurface({
         system: "win32",
         windowHandle: hwnd,
@@ -225,8 +223,8 @@ export async function initSDL(
   const device = await adapter.requestDevice();
   console.log("WebGPU device ready");
 
-  const window = createWindow("Deno + SDL2 + WebGPU", width, height);
-  console.log("Window handle", window);
+  const window = createWindow("gol3D", width, height);
+  console.log("Window handle", Deno.UnsafePointer.value(window));
   const surface = createSurface(window, width, height);
   console.log("UnsafeWindowSurface created");
   const { canvas, context: canvasContext } = makeCanvas(surface, width, height);
