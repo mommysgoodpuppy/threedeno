@@ -1,6 +1,9 @@
 {
   "imports": {
+    "@react-three/fiber": "npm:@react-three/fiber@^9.5.0",
+    "@types/react": "npm:@types/react@^19.2.8",
     "@types/three": "npm:@types/three@^0.182.0",
+    "react": "npm:react@^19.2.3",
     "three": "npm:three@^0.182.0"
   }
 }
