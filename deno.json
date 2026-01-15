@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "@types/three": "npm:@types/three@^0.182.0",
+    "three": "npm:three@^0.182.0"
+  }
+}
