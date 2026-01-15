@@ -75,7 +75,8 @@ camera = new THREE.PerspectiveCamera(75, WIDTH / HEIGHT, 0.1, 1000);
 camera.position.z = 0.22; // Moved closer as the GOL grid is small (approx 0.3 units)
 
 // Debug: Add a light just in case materials need it (BasicMaterial doesn't, but good practice)
-const light = new THREE.DirectionalLight(0xffffff, 3);
+// Debug: Add a light just in case materials need it (BasicMaterial doesn't, but good practice)
+const light = new THREE.DirectionalLight(0xffffff, 6); // Boosted intensity
 light.position.set(1, 2, 1);
 light.castShadow = true;
 light.shadow.mapSize.width = 4096;
@@ -91,8 +92,12 @@ light.shadow.camera.bottom = -d;
 light.shadow.bias = -0.0005;
 scene.add(light);
 
-const ambientLight = new THREE.AmbientLight(0x404040);
+const ambientLight = new THREE.AmbientLight(0xffffff, 2); // Bright ambient light
 scene.add(ambientLight);
+
+// Add hemi light for better overall fill
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 2);
+scene.add(hemiLight);
 
 // Renderer Setup
 console.log("Creating WebGPURenderer");

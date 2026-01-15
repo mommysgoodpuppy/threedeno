@@ -95,11 +95,16 @@ const initCellOpacity = () => {
 };
 
 const createCubeMaterials = () => {
-  // Main white cube material with toon shading - transparent for fading
-  const mainMaterial = new THREE.MeshToonMaterial({
-    color: 0xFFFFFF,
+  // Main cube material - "Glowing" aesthetic
+  // using Phong for shininess + Emissive for glow illusion
+  const mainMaterial = new THREE.MeshPhongMaterial({
+    color: 0xffffff,
+    emissive: 0x000000,
+    specular: 0x111111,
+    shininess: 30,
     transparent: true,
     opacity: 1,
+    dithering: true, // Enable dithering as requested
   });
 
   // Black edge material - transparent for fading
@@ -108,6 +113,7 @@ const createCubeMaterials = () => {
     side: THREE.BackSide,
     transparent: true,
     opacity: 1,
+    dithering: true,
   });
 
   return [mainMaterial, edgeMaterial];
@@ -276,9 +282,8 @@ const updateInstancedMesh = () => {
   }
   let instanceCount = 0;
 
-  const white = new THREE.Color(0xFFFFFF);
-  const black = new THREE.Color(0x000000);
   const bgColor = new THREE.Color(0x202020); // Match scene background
+  const time = Date.now() * 0.0005; // Time factor for color cycling
 
   for (let x = 0; x < gameState.size; x++) {
     for (let y = 0; y < gameState.size; y++) {
@@ -298,14 +303,39 @@ const updateInstancedMesh = () => {
           matrix.compose(position, quaternion, scale);
           gameState.instancedMesh.setMatrixAt(instanceCount, matrix);
 
+          // Calculate Color: Mostly white, rare red
+          const cellColor = new THREE.Color(0xFFFFFF);
+          // Use a stable hash for randomness so a cell maintains its color
+          const hash = Math.sin(x * 12.9898 + y * 78.233 + z * 54.53) *
+            43758.5453;
+          if (Math.abs(hash % 1) < 0.01) { // 1% chance of being red
+            cellColor.setHex(0xFF0000);
+          }
+
           // Fade color towards background to simulate opacity
-          const blendedWhite = white.clone().lerp(bgColor, 1 - opacity);
-          gameState.instancedMesh.setColorAt(instanceCount, blendedWhite);
+          // Aggressive curve: keep full bright mostly
+          // We blend to bgColor. t=0 is full color, t=1 is bgColor.
+          // We want t to stay close to 0 effectively, then ramp up to 1 at the end.
+          // current opacity is 0..1. 1 is visible.
+          // linear lerp uses (1 - opacity).
+          // We want to use something smaller than (1 - opacity) generally.
+          // Power of 20 keeps it bright until very low opacity
+          // Opacity 0.2 -> (0.8)^20 ~= 0.01 (Still 99% bright)
+          // Opacity 0.1 -> (0.9)^20 ~= 0.12 (starting to fade)
+          // Opacity 0.05 -> (0.95)^20 ~= 0.35
+          const blendFactor = Math.pow(1 - opacity, 20);
+
+          const blendedColor = cellColor.clone().lerp(bgColor, blendFactor);
+
+          gameState.instancedMesh.setColorAt(instanceCount, blendedColor);
 
           if (gameState.edgeInstancedMesh) {
             gameState.edgeInstancedMesh.setMatrixAt(instanceCount, matrix);
             // Edge fades from black towards background
-            const blendedBlack = black.clone().lerp(bgColor, 1 - opacity);
+            const blendedBlack = new THREE.Color(0x000000).lerp(
+              bgColor,
+              blendFactor,
+            );
             gameState.edgeInstancedMesh.setColorAt(instanceCount, blendedBlack);
           }
           instanceCount++;
